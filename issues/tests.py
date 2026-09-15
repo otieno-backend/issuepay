@@ -1,3 +1,261 @@
-from django.test import TestCase
+from django.contrib.auth import get_user_model
+from rest_framework import status
+from rest_framework.test import APITestCase
 
-# Create your tests here.
+from .models import Issue
+
+
+User = get_user_model()
+
+
+class IssueAPITests(APITestCase):
+
+    def setUp(self):
+        self.customer = User.objects.create_user(
+            username="customer1",
+            email="customer1@example.com",
+            password="StrongPassword123",
+            role=User.Role.CUSTOMER,
+        )
+
+        self.other_customer = User.objects.create_user(
+            username="customer2",
+            email="customer2@example.com",
+            password="StrongPassword123",
+            role=User.Role.CUSTOMER,
+        )
+
+        self.staff = User.objects.create_user(
+            username="staff1",
+            email="staff1@example.com",
+            password="StrongPassword123",
+            role=User.Role.STAFF,
+        )
+
+        self.admin = User.objects.create_user(
+            username="admin1",
+            email="admin1@example.com",
+            password="StrongPassword123",
+            role=User.Role.ADMIN,
+        )
+
+        self.issue = Issue.objects.create(
+            title="Payment failed",
+            description="My payment failed.",
+            customer=self.customer,
+            priority=Issue.Priority.HIGH,
+        )
+
+        self.other_issue = Issue.objects.create(
+            title="Account problem",
+            description="I cannot access my account.",
+            customer=self.other_customer,
+            priority=Issue.Priority.MEDIUM,
+        )
+
+    def authenticate(self, user):
+        self.client.force_authenticate(user=user)
+
+    def test_unauthenticated_user_cannot_list_issues(self):
+        response = self.client.get("/api/issues/")
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_401_UNAUTHORIZED,
+        )
+
+    def test_customer_can_create_issue(self):
+        self.authenticate(self.customer)
+
+        response = self.client.post(
+            "/api/issues/",
+            {
+                "title": "New payment issue",
+                "description": "Payment was not completed.",
+                "priority": "HIGH",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        self.assertEqual(
+            response.data["customer"],
+            self.customer.username,
+        )
+
+        self.assertEqual(
+            Issue.objects.count(),
+            3,
+        )
+
+    def test_customer_can_only_see_own_issues(self):
+        self.authenticate(self.customer)
+
+        response = self.client.get("/api/issues/")
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            len(response.data),
+            1,
+        )
+
+        self.assertEqual(
+            response.data[0]["id"],
+            self.issue.id,
+        )
+
+    def test_customer_cannot_view_another_customers_issue(self):
+        self.authenticate(self.customer)
+
+        response = self.client.get(
+            f"/api/issues/{self.other_issue.id}/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+    def test_customer_cannot_update_issue(self):
+        self.authenticate(self.customer)
+
+        response = self.client.patch(
+            f"/api/issues/{self.issue.id}/",
+            {
+                "status": "RESOLVED",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_customer_cannot_delete_issue(self):
+        self.authenticate(self.customer)
+
+        response = self.client.delete(
+            f"/api/issues/{self.issue.id}/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_staff_can_view_all_issues(self):
+        self.authenticate(self.staff)
+
+        response = self.client.get("/api/issues/")
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            len(response.data),
+            2,
+        )
+
+    def test_staff_can_update_issue_status(self):
+        self.authenticate(self.staff)
+
+        response = self.client.patch(
+            f"/api/issues/{self.issue.id}/",
+            {
+                "status": "IN_PROGRESS",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.issue.refresh_from_db()
+
+        self.assertEqual(
+            self.issue.status,
+            Issue.Status.IN_PROGRESS,
+        )
+
+    def test_staff_can_assign_issue(self):
+        self.authenticate(self.staff)
+
+        response = self.client.patch(
+            f"/api/issues/{self.issue.id}/",
+            {
+                "assigned_to": self.staff.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.issue.refresh_from_db()
+
+        self.assertEqual(
+            self.issue.assigned_to,
+            self.staff,
+        )
+
+    def test_filter_by_status(self):
+        self.authenticate(self.staff)
+
+        self.issue.status = Issue.Status.IN_PROGRESS
+        self.issue.save()
+
+        response = self.client.get(
+            "/api/issues/?status=IN_PROGRESS"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            len(response.data),
+            1,
+        )
+
+        self.assertEqual(
+            response.data[0]["id"],
+            self.issue.id,
+        )
+
+    def test_filter_by_priority(self):
+        self.authenticate(self.staff)
+
+        response = self.client.get(
+            "/api/issues/?priority=HIGH"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            len(response.data),
+            1,
+        )
+
+        self.assertEqual(
+            response.data[0]["id"],
+            self.issue.id,
+        )
