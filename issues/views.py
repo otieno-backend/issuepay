@@ -2,9 +2,9 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, generics
 from rest_framework.permissions import IsAuthenticated
 
-from .models import Issue
+from .serializers import IssueSerializer, StaffIssueUpdateSerializer
 from .permissions import IsIssueParticipant
-from .serializers import IssueSerializer
+from .models import Issue
 
 
 class IssueListCreateView(generics.ListCreateAPIView):
@@ -64,6 +64,13 @@ class IssueDetailView(generics.RetrieveUpdateDestroyAPIView):
         IsAuthenticated,
         IsIssueParticipant,
     ]
+
+    def get_serializer_class(self):
+        if self.request.user.role in ["STAFF", "ADMIN"]:
+            if self.request.method in ["PUT", "PATCH"]:
+                return StaffIssueUpdateSerializer
+
+        return IssueSerializer
 
     def get_queryset(self):
         user = self.request.user

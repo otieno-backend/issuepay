@@ -103,12 +103,12 @@ class IssueAPITests(APITestCase):
         )
 
         self.assertEqual(
-            len(response.data),
+            len(response.data["results"]),
             1,
         )
 
         self.assertEqual(
-            response.data[0]["id"],
+            response.data["results"][0]["id"],
             self.issue.id,
         )
 
@@ -163,7 +163,7 @@ class IssueAPITests(APITestCase):
         )
 
         self.assertEqual(
-            len(response.data),
+            len(response.data["results"]),
             2,
         )
 
@@ -229,12 +229,12 @@ class IssueAPITests(APITestCase):
         )
 
         self.assertEqual(
-            len(response.data),
+            len(response.data["results"]),
             1,
         )
 
         self.assertEqual(
-            response.data[0]["id"],
+            response.data["results"][0]["id"],
             self.issue.id,
         )
 
@@ -251,11 +251,11 @@ class IssueAPITests(APITestCase):
         )
 
         self.assertEqual(
-            len(response.data),
+            len(response.data["results"]),
             1,
         )
 
         self.assertEqual(
-            response.data[0]["id"],
+            response.data["results"][0]["id"],
             self.issue.id,
         )
