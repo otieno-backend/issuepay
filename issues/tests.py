@@ -1,6 +1,8 @@
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
+from notifications.models import Notification
+
 
 from .models import Issue
 
@@ -91,6 +93,21 @@ class IssueAPITests(APITestCase):
             Issue.objects.count(),
             3,
         )
+
+        notification = Notification.objects.get(
+            user=self.customer,
+            notification_type=Notification.Type.ISSUE_CREATED,
+        )
+
+        self.assertIn(
+            "New payment issue",
+            notification.message,
+        )
+
+        self.assertFalse(
+            notification.is_read,
+        )
+
 
     def test_customer_can_only_see_own_issues(self):
         self.authenticate(self.customer)
@@ -259,3 +276,153 @@ class IssueAPITests(APITestCase):
             response.data["results"][0]["id"],
             self.issue.id,
         )
+
+    def test_staff_assignment_creates_notification(self):
+        self.authenticate(self.staff)
+
+        response = self.client.patch(
+            f"/api/issues/{self.issue.id}/",
+            {
+                "assigned_to": self.staff.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        notification = Notification.objects.get(
+            user=self.staff,
+            notification_type=Notification.Type.ISSUE_ASSIGNED,
+        )
+
+        self.assertIn(
+            self.issue.title,
+            notification.message,
+        )
+
+        self.assertFalse(
+            notification.is_read,
+        )
+
+
+    def test_status_change_creates_notification_for_customer(self):
+        self.authenticate(self.staff)
+
+        response = self.client.patch(
+            f"/api/issues/{self.issue.id}/",
+            {
+                "status": "IN_PROGRESS",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        notification = Notification.objects.get(
+            user=self.customer,
+            notification_type=Notification.Type.ISSUE_STATUS_CHANGED,
+        )
+
+        self.assertIn(
+            self.issue.title,
+            notification.message,
+        )
+
+        self.assertIn(
+            "IN_PROGRESS",
+            notification.message,
+        )
+
+        self.assertFalse(
+            notification.is_read,
+        )
+
+    def test_customer_creating_issue_notifies_staff(self):
+        self.authenticate(self.customer)
+
+        response = self.client.post(
+            "/api/issues/",
+            {
+                "title": "Staff notification test",
+                "description": "Staff should be notified.",
+                "priority": "HIGH",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        notification = Notification.objects.get(
+            user=self.staff,
+            notification_type=Notification.Type.ISSUE_CREATED,
+        )
+
+        self.assertIn(
+            "Staff notification test",
+            notification.message,
+        )
+
+        self.assertIn(
+            self.customer.username,
+            notification.message,
+        )
+
+        self.assertFalse(
+            notification.is_read,
+        )
+
+    def test_customer_creating_issue_notifies_all_staff(self):
+        second_staff = User.objects.create_user(
+            username="staff2",
+            email="staff2@example.com",
+            password="StrongPassword123",
+            role=User.Role.STAFF,
+        )
+
+        self.authenticate(self.customer)
+
+        response = self.client.post(
+            "/api/issues/",
+            {
+                "title": "Multiple staff test",
+                "description": "All staff should be notified.",
+                "priority": "MEDIUM",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        notifications = Notification.objects.filter(
+            notification_type=Notification.Type.ISSUE_CREATED,
+            user__in=[self.staff, second_staff],
+        )
+
+        self.assertEqual(
+            notifications.count(),
+            2,
+        )
+
+        for notification in notifications:
+            self.assertIn(
+                "Multiple staff test",
+                notification.message,
+            )
+
+            self.assertFalse(
+                notification.is_read,
+            )
+   
+   
