@@ -6,24 +6,19 @@ class IsIssueParticipant(BasePermission):
     def has_object_permission(self, request, view, obj):
         user = request.user
 
-        
         if user.role == "ADMIN":
-            return True
+            return request.method != "DELETE"
 
-        
         if user.role == "STAFF":
-            return True
+            return request.method != "DELETE"
 
-        
         if user.role == "CUSTOMER":
             if obj.customer != user:
                 return False
 
-            
             if request.method in SAFE_METHODS:
                 return True
 
-            
             return False
 
         return False
