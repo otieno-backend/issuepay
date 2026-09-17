@@ -1,11 +1,15 @@
-
+from decimal import Decimal
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from issues.models import Issue
+from notifications.models import Notification
+
 
 from .models import Payment
+
+
 
 
 User = get_user_model()
@@ -45,14 +49,18 @@ class PaymentAPITests(APITestCase):
         self.issue = Issue.objects.create(
             title="Payment issue",
             description="Customer needs to make a payment.",
+            amount="1000.00",
             customer=self.customer,
         )
+
 
         self.other_issue = Issue.objects.create(
             title="Other payment issue",
             description="Another customer's issue.",
+            amount="500.00",
             customer=self.other_customer,
         )
+
 
         self.payment = Payment.objects.create(
             issue=self.issue,
@@ -86,7 +94,7 @@ class PaymentAPITests(APITestCase):
             "/api/payments/",
             {
                 "issue": self.issue.id,
-                "amount": "1500.00",
+                "amount": "1000.00",
                 "method": "MPESA",
             },
             format="json",
@@ -123,7 +131,7 @@ class PaymentAPITests(APITestCase):
             "/api/payments/",
             {
                 "issue": self.other_issue.id,
-                "amount": "1500.00",
+                "amount": "1000.00",
                 "method": "MPESA",
             },
             format="json",
@@ -172,7 +180,7 @@ class PaymentAPITests(APITestCase):
         response = self.client.patch(
             f"/api/payments/{self.payment.id}/",
             {
-                "amount": "2000.00",
+                "amount": "1000.00",
             },
             format="json",
         )
@@ -201,7 +209,7 @@ class PaymentAPITests(APITestCase):
             "/api/payments/",
             {
                 "issue": self.issue.id,
-                "amount": "2000.00",
+                "amount": "1000.00",
                 "method": "CARD",
                 "status": "SUCCESSFUL",
             },
@@ -229,7 +237,7 @@ class PaymentAPITests(APITestCase):
             "/api/payments/",
             {
                 "issue": self.issue.id,
-                "amount": "2000.00",
+                "amount": "1000.00",
                 "method": "CARD",
                 "transaction_id": "TXN-12345",
             },
@@ -633,3 +641,108 @@ class PaymentAPITests(APITestCase):
             status.HTTP_403_FORBIDDEN,
         )
 
+    def test_payment_amount_must_match_issue_amount(self):
+        self.authenticate(self.customer)
+
+        response = self.client.post(
+            "/api/payments/",
+            {
+                "issue": self.issue.id,
+                "amount": "500.00",
+                "method": "MPESA",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+    def test_payment_amount_matching_issue_amount_is_accepted(self):
+        self.authenticate(self.customer)
+
+        response = self.client.post(
+            "/api/payments/",
+            {
+                "issue": self.issue.id,
+                "amount": "1000.00",
+                "method": "MPESA",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        payment = Payment.objects.get(
+            id=response.data["id"]
+        )
+
+        self.assertEqual(
+            payment.amount,
+            Decimal("1000.00"),
+        )
+
+    def test_successful_payment_notifies_customer(self):
+        self.authenticate(self.staff)
+
+        response = self.client.patch(
+            f"/api/payments/{self.payment.id}/",
+            {
+                "status": "SUCCESSFUL",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        notification = Notification.objects.filter(
+            user=self.customer,
+            notification_type=Notification.Type.PAYMENT_SUCCESSFUL,
+        ).latest("created_at")
+
+        self.assertIn(
+            "successful",
+            notification.message,
+        )
+
+        self.assertFalse(
+            notification.is_read,
+        )
+
+    def test_failed_payment_notifies_customer(self):
+        self.authenticate(self.staff)
+
+        response = self.client.patch(
+            f"/api/payments/{self.payment.id}/",
+            {
+                "status": "FAILED",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        notification = Notification.objects.filter(
+            user=self.customer,
+            notification_type=Notification.Type.PAYMENT_FAILED,
+        ).latest("created_at")
+
+        self.assertIn(
+            "failed",
+            notification.message,
+        )
+
+        self.assertFalse(
+            notification.is_read,
+        )
+   

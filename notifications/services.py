@@ -50,3 +50,26 @@ def notify_issue_status_changed(customer, issue):
             f"{issue.status}."
         ),
     )
+
+def notify_payment_successful(payment):
+    Notification.objects.create(
+        user=payment.customer,
+        notification_type=Notification.Type.PAYMENT_SUCCESSFUL,
+        message=(
+            f"Your payment of {payment.amount} "
+            f"for issue '{payment.issue.title}' "
+            f"was successful."
+        ),
+    )
+
+
+def notify_payment_failed(payment):
+    Notification.objects.create(
+        user=payment.customer,
+        notification_type=Notification.Type.PAYMENT_FAILED,
+        message=(
+            f"Your payment of {payment.amount} "
+            f"for issue '{payment.issue.title}' "
+            f"failed."
+        ),
+    )

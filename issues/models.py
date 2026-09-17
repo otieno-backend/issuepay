@@ -18,6 +18,13 @@ class Issue(models.Model):
     title = models.CharField(max_length=200)
     description = models.TextField()
 
+    amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+    )
+
+
     customer = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,

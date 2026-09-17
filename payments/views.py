@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from .models import Payment
 from .permissions import IsPaymentParticipant,CanCreatePayment
 from .serializers import PaymentSerializer,PaymentUpdateSerializer
-
+from notifications.services import notify_payment_failed, notify_payment_successful
 
 
 class PaymentListCreateView(generics.ListCreateAPIView):
@@ -93,3 +93,20 @@ class PaymentDetailView(generics.RetrieveUpdateDestroyAPIView):
             return queryset.all()
 
         return queryset.filter(customer=user)
+
+    def perform_update(self, serializer):
+        old_status = self.get_object().status
+
+        payment = serializer.save()
+
+        if (
+            payment.status != old_status
+            and payment.status == Payment.Status.SUCCESSFUL
+        ):
+            notify_payment_successful(payment)
+
+        if (
+            payment.status != old_status
+            and payment.status == Payment.Status.FAILED
+        ):
+            notify_payment_failed(payment)

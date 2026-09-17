@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from .models import Payment
+from .services import validate_status_transition
 
 
 User = get_user_model()
@@ -43,6 +44,23 @@ class PaymentSerializer(serializers.ModelSerializer):
 
         return value
 
+    def validate(self, attrs):
+        issue = attrs.get("issue")
+        amount = attrs.get("amount")
+
+        if issue and amount != issue.amount:
+            raise serializers.ValidationError(
+                {
+                    "amount": (
+                        "Payment amount must match "
+                        "the issue amount."
+                    )
+                }
+            )
+
+        return attrs
+
+
     def validate_issue(self, issue):
         request = self.context.get("request")
 
@@ -64,42 +82,15 @@ class PaymentUpdateSerializer(serializers.ModelSerializer):
         ]
 
     def validate_status(self, value):
-        valid_statuses = {
-            choice[0]
-            for choice in Payment.Status.choices
-        }
-
-        if value not in valid_statuses:
-            raise serializers.ValidationError(
-                "Invalid payment status."
+        try:
+            validate_status_transition(
+                self.instance,
+                value,
             )
-
-        payment = self.instance
-
-        if payment is None:
-            return value
-
-        allowed_transitions = {
-            Payment.Status.PENDING: {
-                Payment.Status.SUCCESSFUL,
-                Payment.Status.FAILED,
-            },
-            Payment.Status.SUCCESSFUL: {
-                Payment.Status.REFUNDED,
-            },
-            Payment.Status.FAILED: set(),
-            Payment.Status.REFUNDED: set(),
-        }
-
-        current_status = payment.status
-
-        if value == current_status:
-            return value
-
-        if value not in allowed_transitions[current_status]:
+        except ValueError as exc:
             raise serializers.ValidationError(
-                f"Cannot change payment status from "
-                f"{current_status} to {value}."
+                str(exc)
             )
 
         return value
+
