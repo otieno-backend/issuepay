@@ -1,6 +1,12 @@
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, generics
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from rest_framework import status
+from .services import initiate_mpesa_stk_push
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 
 from .models import Payment
 from .permissions import IsPaymentParticipant,CanCreatePayment
@@ -110,3 +116,158 @@ class PaymentDetailView(generics.RetrieveUpdateDestroyAPIView):
             and payment.status == Payment.Status.FAILED
         ):
             notify_payment_failed(payment)
+
+class MpesaSTKPushView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        payment_id = request.data.get("payment_id")
+        phone_number = request.data.get("phone_number")
+
+        if not payment_id:
+            return Response(
+                {"detail": "payment_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not phone_number:
+            return Response(
+                {"detail": "phone_number is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            payment = Payment.objects.get(id=payment_id)
+        except Payment.DoesNotExist:
+            return Response(
+                {"detail": "Payment not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if payment.status != Payment.Status.PENDING:
+            return Response(
+                {
+                    "detail": (
+                        "STK Push can only be initiated "
+                        "for a pending payment."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            mpesa_response = initiate_mpesa_stk_push(
+                payment,
+                phone_number,
+            )
+        except Exception as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response(
+            {
+                "message": "STK Push initiated successfully.",
+                "data": mpesa_response,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+@method_decorator(csrf_exempt, name="dispatch")
+class MpesaCallbackView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request):
+        callback_data = request.data
+
+        try:
+            stk_callback = callback_data["Body"]["stkCallback"]
+        except (KeyError, TypeError):
+            return Response(
+                {
+                    "ResultCode": 1,
+                    "ResultDesc": "Invalid callback payload.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        result_code = stk_callback.get("ResultCode")
+        result_desc = stk_callback.get("ResultDesc", "")
+
+        checkout_request_id = stk_callback.get(
+            "CheckoutRequestID"
+        )
+
+        if not checkout_request_id:
+            return Response(
+                {
+                    "ResultCode": 1,
+                    "ResultDesc": "CheckoutRequestID is missing.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            payment = Payment.objects.get(
+                mpesa_checkout_request_id=checkout_request_id
+            )
+        except Payment.DoesNotExist:
+            return Response(
+                {
+                    "ResultCode": 1,
+                    "ResultDesc": "Payment not found.",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if result_code == 0:
+            callback_metadata = stk_callback.get(
+                "CallbackMetadata", {}
+            )
+
+            items = callback_metadata.get("Item", [])
+
+            metadata = {}
+
+            for item in items:
+                name = item.get("Name")
+                value = item.get("Value")
+
+                if name:
+                    metadata[name] = value
+
+            receipt_number = metadata.get(
+                "MpesaReceiptNumber"
+            )
+
+            payment.transaction_id = receipt_number
+            payment.status = Payment.Status.SUCCESSFUL
+
+            payment.save(
+                update_fields=[
+                    "transaction_id",
+                    "status",
+                    "updated_at",
+                ]
+            )
+
+        else:
+            payment.status = Payment.Status.FAILED
+
+            payment.save(
+                update_fields=[
+                    "status",
+                    "updated_at",
+                ]
+            )
+
+        return Response(
+            {
+                "ResultCode": 0,
+                "ResultDesc": "Callback processed successfully.",
+            },
+            status=status.HTTP_200_OK,
+        )
+    

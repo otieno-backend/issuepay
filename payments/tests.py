@@ -1,4 +1,6 @@
 from decimal import Decimal
+from unittest.mock import patch, Mock
+
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -65,7 +67,7 @@ class PaymentAPITests(APITestCase):
         self.payment = Payment.objects.create(
             issue=self.issue,
             customer=self.customer,
-            amount="1000.00",
+            amount=Decimal("1000.00"),
             method=Payment.Method.MPESA,
         )
 
@@ -94,7 +96,7 @@ class PaymentAPITests(APITestCase):
             "/api/payments/",
             {
                 "issue": self.issue.id,
-                "amount": "1000.00",
+                "amount": Decimal("1000.00"),
                 "method": "MPESA",
             },
             format="json",
@@ -131,7 +133,7 @@ class PaymentAPITests(APITestCase):
             "/api/payments/",
             {
                 "issue": self.other_issue.id,
-                "amount": "1000.00",
+                "amount": Decimal("1000.00"),
                 "method": "MPESA",
             },
             format="json",
@@ -180,7 +182,7 @@ class PaymentAPITests(APITestCase):
         response = self.client.patch(
             f"/api/payments/{self.payment.id}/",
             {
-                "amount": "1000.00",
+                "amount": Decimal("1000.00"),
             },
             format="json",
         )
@@ -209,7 +211,7 @@ class PaymentAPITests(APITestCase):
             "/api/payments/",
             {
                 "issue": self.issue.id,
-                "amount": "1000.00",
+                "amount": Decimal("1000.00"),
                 "method": "CARD",
                 "status": "SUCCESSFUL",
             },
@@ -237,7 +239,7 @@ class PaymentAPITests(APITestCase):
             "/api/payments/",
             {
                 "issue": self.issue.id,
-                "amount": "1000.00",
+                "amount": Decimal("1000.00"),
                 "method": "CARD",
                 "transaction_id": "TXN-12345",
             },
@@ -746,3 +748,517 @@ class PaymentAPITests(APITestCase):
             notification.is_read,
         )
    
+    def test_mpesa_successful_callback_marks_payment_successful(self):
+        self.payment.mpesa_checkout_request_id = "ws_CO_123456789"
+        self.payment.save()
+
+        callback_payload = {
+            "Body": {
+                "stkCallback": {
+                    "MerchantRequestID": "29115-34620561-1",
+                    "CheckoutRequestID": "ws_CO_123456789",
+                    "ResultCode": 0,
+                    "ResultDesc": "The service request is processed successfully.",
+                    "CallbackMetadata": {
+                        "Item": [
+                            {
+                                "Name": "Amount",
+                                "Value": 1000,
+                            },
+                            {
+                                "Name": "MpesaReceiptNumber",
+                                "Value": "NLJ7RT61SV",
+                            },
+                            {
+                                "Name": "TransactionDate",
+                                "Value": 20260917083000,
+                            },
+                            {
+                                "Name": "PhoneNumber",
+                                "Value": 254712345678,
+                            },
+                        ]
+                    },
+                }
+            }
+        }
+
+        response = self.client.post(
+            "/api/payments/mpesa/callback/",
+            callback_payload,
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.payment.refresh_from_db()
+
+        self.assertEqual(
+            self.payment.status,
+            Payment.Status.SUCCESSFUL,
+        )
+
+    def test_mpesa_successful_callback_saves_receipt_number(self):
+        self.payment.mpesa_checkout_request_id = "ws_CO_RECEIPT123"
+        self.payment.save()
+
+        callback_payload = {
+            "Body": {
+                "stkCallback": {
+                    "MerchantRequestID": "29115-34620561-2",
+                    "CheckoutRequestID": "ws_CO_RECEIPT123",
+                    "ResultCode": 0,
+                    "ResultDesc": "The service request is processed successfully.",
+                    "CallbackMetadata": {
+                        "Item": [
+                            {
+                                "Name": "Amount",
+                                "Value": 1000,
+                            },
+                            {
+                                "Name": "MpesaReceiptNumber",
+                                "Value": "ABC123XYZ",
+                            },
+                            {
+                                "Name": "TransactionDate",
+                                "Value": 20260917083000,
+                            },
+                            {
+                                "Name": "PhoneNumber",
+                                "Value": 254712345678,
+                            },
+                        ]
+                    },
+                }
+            }
+        }
+
+        response = self.client.post(
+            "/api/payments/mpesa/callback/",
+            callback_payload,
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.payment.refresh_from_db()
+
+        self.assertEqual(
+            self.payment.transaction_id,
+            "ABC123XYZ",
+        )
+
+    def test_mpesa_failed_callback_marks_payment_failed(self):
+        self.payment.mpesa_checkout_request_id = "ws_CO_FAILED123"
+        self.payment.save()
+
+        callback_payload = {
+            "Body": {
+                "stkCallback": {
+                    "MerchantRequestID": "29115-34620561-3",
+                    "CheckoutRequestID": "ws_CO_FAILED123",
+                    "ResultCode": 1032,
+                    "ResultDesc": "Request canceled by user.",
+                }
+            }
+        }
+
+        response = self.client.post(
+            "/api/payments/mpesa/callback/",
+            callback_payload,
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.payment.refresh_from_db()
+
+        self.assertEqual(
+            self.payment.status,
+            Payment.Status.FAILED,
+        )
+
+    def test_mpesa_callback_rejects_unknown_checkout_request_id(self):
+        callback_payload = {
+            "Body": {
+                "stkCallback": {
+                    "MerchantRequestID": "29115-34620561-4",
+                    "CheckoutRequestID": "ws_CO_UNKNOWN",
+                    "ResultCode": 0,
+                    "ResultDesc": "The service request is processed successfully.",
+                }
+            }
+        }
+
+        response = self.client.post(
+            "/api/payments/mpesa/callback/",
+            callback_payload,
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+        self.assertEqual(
+            response.data["ResultCode"],
+            1,
+        )
+
+    def test_mpesa_callback_rejects_malformed_payload(self):
+        callback_payload = {
+            "invalid": "payload"
+        }
+
+        response = self.client.post(
+            "/api/payments/mpesa/callback/",
+            callback_payload,
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertEqual(
+            response.data["ResultCode"],
+            1,
+        )
+
+    def test_mpesa_callback_requires_checkout_request_id(self):
+        callback_payload = {
+            "Body": {
+                "stkCallback": {
+                    "MerchantRequestID": "29115-34620561-5",
+                    "ResultCode": 0,
+                    "ResultDesc": "The service request is processed successfully.",
+                }
+            }
+        }
+
+        response = self.client.post(
+            "/api/payments/mpesa/callback/",
+            callback_payload,
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertEqual(
+            response.data["ResultCode"],
+            1,
+        )
+
+    @patch("payments.services.requests.post")
+    @patch("payments.services.get_mpesa_access_token")
+    def test_mpesa_stk_push_saves_checkout_request_id(
+        self,
+        mock_get_access_token,
+        mock_post,
+    ):
+        from .services import initiate_mpesa_stk_push
+
+        mock_get_access_token.return_value = "fake-access-token"
+
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "MerchantRequestID": "29115-34620561-1",
+            "CheckoutRequestID": "ws_CO_123456789",
+            "ResponseCode": "0",
+            "ResponseDescription": "Success. Request accepted for processing",
+            "CustomerMessage": "Success. Request accepted for processing",
+        }
+
+        mock_post.return_value = mock_response
+
+        with patch(
+            "payments.services.settings.MPESA_SHORTCODE",
+            "174379",
+        ), patch(
+            "payments.services.settings.MPESA_PASSKEY",
+            "fake-passkey",
+        ), patch(
+            "payments.services.settings.MPESA_CALLBACK_URL",
+            "https://example.com/api/payments/mpesa/callback/",
+        ):
+            result = initiate_mpesa_stk_push(
+                self.payment,
+                "254712345678",
+            )
+
+        self.payment.refresh_from_db()
+
+        self.assertEqual(
+            result["CheckoutRequestID"],
+            "ws_CO_123456789",
+        )
+
+        self.assertEqual(
+            self.payment.mpesa_checkout_request_id,
+            "ws_CO_123456789",
+        )
+
+        mock_get_access_token.assert_called_once()
+        mock_post.assert_called_once()
+
+
+    @patch("payments.services.requests.post")
+    @patch("payments.services.get_mpesa_access_token")
+    def test_mpesa_stk_push_sends_correct_payload(
+        self,
+        mock_get_access_token,
+        mock_post,
+    ):
+        from .services import initiate_mpesa_stk_push
+
+        mock_get_access_token.return_value = "fake-access-token"
+
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "CheckoutRequestID": "ws_CO_PAYLOAD123",
+            "ResponseCode": "0",
+        }
+
+        mock_post.return_value = mock_response
+
+        with patch(
+            "payments.services.settings.MPESA_SHORTCODE",
+            "174379",
+        ), patch(
+            "payments.services.settings.MPESA_PASSKEY",
+            "fake-passkey",
+        ), patch(
+            "payments.services.settings.MPESA_CALLBACK_URL",
+            "https://example.com/api/payments/mpesa/callback/",
+        ):
+            initiate_mpesa_stk_push(
+                self.payment,
+                "254712345678",
+            )
+
+        mock_post.assert_called_once()
+
+        payload = mock_post.call_args.kwargs["json"]
+
+        self.assertEqual(
+            payload["BusinessShortCode"],
+            "174379",
+        )
+
+        self.assertEqual(
+            payload["Amount"],
+            1000,
+        )
+
+        self.assertEqual(
+            payload["PartyA"],
+            "254712345678",
+        )
+
+        self.assertEqual(
+            payload["PartyB"],
+            "174379",
+        )
+
+        self.assertEqual(
+            payload["PhoneNumber"],
+            "254712345678",
+        )
+
+        self.assertEqual(
+            payload["AccountReference"],
+            f"ISSUE-{self.payment.issue_id}",
+        )
+
+        self.assertEqual(
+            payload["TransactionDesc"],
+            f"Payment for Issue {self.payment.issue_id}",
+        )
+
+    @patch("payments.services.requests.get")
+    def test_get_mpesa_access_token(self, mock_get):
+        from .services import get_mpesa_access_token
+
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "access_token": "fake-access-token"
+        }
+
+        mock_get.return_value = mock_response
+
+        with patch(
+            "payments.services.settings.MPESA_CONSUMER_KEY",
+            "fake-consumer-key",
+        ), patch(
+            "payments.services.settings.MPESA_CONSUMER_SECRET",
+            "fake-consumer-secret",
+        ), patch(
+            "payments.services.settings.MPESA_ENVIRONMENT",
+            "sandbox",
+        ):
+            token = get_mpesa_access_token()
+
+        self.assertEqual(
+            token,
+            "fake-access-token",
+        )
+
+        mock_get.assert_called_once()
+
+        url = mock_get.call_args.args[0]
+
+        self.assertEqual(
+            url,
+            "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
+        )
+
+        kwargs = mock_get.call_args.kwargs
+
+        self.assertEqual(
+            kwargs["auth"],
+            (
+                "fake-consumer-key",
+                "fake-consumer-secret",
+            ),
+        )
+
+        self.assertEqual(
+            kwargs["timeout"],
+            30,
+        )
+
+    @patch("payments.services.requests.get")
+    def test_get_mpesa_access_token_raises_http_error(
+        self,
+        mock_get,
+    ):
+        from .services import get_mpesa_access_token
+        import requests
+
+        mock_response = Mock()
+
+        mock_response.raise_for_status.side_effect = (
+            requests.HTTPError("401 Client Error")
+        )
+
+        mock_get.return_value = mock_response
+
+        with patch(
+            "payments.services.settings.MPESA_CONSUMER_KEY",
+            "fake-consumer-key",
+        ), patch(
+            "payments.services.settings.MPESA_CONSUMER_SECRET",
+            "fake-consumer-secret",
+        ), patch(
+            "payments.services.settings.MPESA_ENVIRONMENT",
+            "sandbox",
+        ):
+            with self.assertRaises(requests.HTTPError):
+                get_mpesa_access_token()
+
+        mock_get.assert_called_once()   
+
+    def test_normalize_mpesa_phone_number(self):
+        from .services import normalize_mpesa_phone_number
+
+        self.assertEqual(
+            normalize_mpesa_phone_number("0712345678"),
+            "254712345678",
+        )
+
+        self.assertEqual(
+            normalize_mpesa_phone_number("+254712345678"),
+            "254712345678",
+        )
+
+        self.assertEqual(
+            normalize_mpesa_phone_number("254712345678"),
+            "254712345678",
+        )
+
+        self.assertEqual(
+            normalize_mpesa_phone_number("0712 345 678"),
+            "254712345678",
+        )
+
+    def test_normalize_mpesa_phone_number_rejects_invalid_numbers(
+        self,
+    ):
+        from .services import normalize_mpesa_phone_number
+
+        invalid_numbers = [
+            "123456789",
+            "071234",
+            "abcdefghij",
+            "256712345678",
+            "254812345678",
+            "",
+        ]
+
+        for phone_number in invalid_numbers:
+            with self.assertRaises(ValueError):
+                normalize_mpesa_phone_number(phone_number)
+
+    @patch("payments.services.requests.post")
+    @patch("payments.services.get_mpesa_access_token")
+    def test_mpesa_stk_push_normalizes_phone_number(
+        self,
+        mock_get_access_token,
+        mock_post,
+    ):
+        from .services import initiate_mpesa_stk_push
+
+        mock_get_access_token.return_value = "fake-access-token"
+
+        mock_response = Mock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "CheckoutRequestID": "ws_CO_PHONE123",
+            "ResponseCode": "0",
+        }
+
+        mock_post.return_value = mock_response
+
+        with patch(
+            "payments.services.settings.MPESA_SHORTCODE",
+            "174379",
+        ), patch(
+            "payments.services.settings.MPESA_PASSKEY",
+            "fake-passkey",
+        ), patch(
+            "payments.services.settings.MPESA_CALLBACK_URL",
+            "https://example.com/api/payments/mpesa/callback/",
+        ):
+            initiate_mpesa_stk_push(
+                self.payment,
+                "0712 345 678",
+            )
+
+        payload = mock_post.call_args.kwargs["json"]
+
+        self.assertEqual(
+            payload["PartyA"],
+            "254712345678",
+        )
+
+        self.assertEqual(
+            payload["PhoneNumber"],
+            "254712345678",
+        )
