@@ -25,23 +25,20 @@ class NotificationAPITests(APITestCase):
             role=User.Role.CUSTOMER,
         )
 
-        self.staff = User.objects.create_user(
-            username="staff1",
-            email="staff1@example.com",
-            password="StrongPassword123",
-            role=User.Role.STAFF,
-        )
-
         self.notification = Notification.objects.create(
             user=self.customer,
-            notification_type=Notification.Type.ISSUE_CREATED,
-            message="Your issue has been created.",
+            notification_type=(
+                Notification.Type.PAYMENT_SUCCESSFUL
+            ),
+            message="Your payment was successful.",
         )
 
         self.other_notification = Notification.objects.create(
             user=self.other_customer,
-            notification_type=Notification.Type.PAYMENT_SUCCESSFUL,
-            message="Your payment was successful.",
+            notification_type=(
+                Notification.Type.PAYMENT_FAILED
+            ),
+            message="Your payment failed.",
         )
 
     def authenticate(self, user):
@@ -75,7 +72,39 @@ class NotificationAPITests(APITestCase):
             self.notification.id,
         )
 
-    def test_customer_cannot_view_other_user_notification(self):
+    def test_customer_cannot_see_other_users_notifications(self):
+        self.authenticate(self.customer)
+
+        response = self.client.get("/api/notifications/")
+
+        ids = [
+            notification["id"]
+            for notification in response.data["results"]
+        ]
+
+        self.assertNotIn(
+            self.other_notification.id,
+            ids,
+        )
+
+    def test_customer_can_view_own_notification(self):
+        self.authenticate(self.customer)
+
+        response = self.client.get(
+            f"/api/notifications/{self.notification.id}/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["id"],
+            self.notification.id,
+        )
+
+    def test_customer_cannot_view_other_users_notification(self):
         self.authenticate(self.customer)
 
         response = self.client.get(
@@ -85,11 +114,6 @@ class NotificationAPITests(APITestCase):
         self.assertEqual(
             response.status_code,
             status.HTTP_404_NOT_FOUND,
-        )
-
-    def test_notification_is_unread_by_default(self):
-        self.assertFalse(
-            self.notification.is_read
         )
 
     def test_customer_can_mark_notification_as_read(self):
@@ -114,31 +138,50 @@ class NotificationAPITests(APITestCase):
             self.notification.is_read
         )
 
-    def test_customer_cannot_mark_other_users_notification_as_read(self):
+    def test_customer_cannot_modify_notification_message(self):
         self.authenticate(self.customer)
 
         response = self.client.patch(
-            f"/api/notifications/{self.other_notification.id}/",
+            f"/api/notifications/{self.notification.id}/",
             {
-                "is_read": True,
+                "message": "Modified message",
             },
             format="json",
         )
 
         self.assertEqual(
             response.status_code,
-            status.HTTP_404_NOT_FOUND,
+            status.HTTP_200_OK,
+        )
+
+        self.notification.refresh_from_db()
+
+        self.assertEqual(
+            self.notification.message,
+            "Your payment was successful.",
+        )
+
+    def test_customer_cannot_create_notification(self):
+        self.authenticate(self.customer)
+
+        response = self.client.post(
+            "/api/notifications/",
+            {
+                "notification_type": (
+                    "PAYMENT_SUCCESSFUL"
+                ),
+                "message": "Fake notification",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_405_METHOD_NOT_ALLOWED,
         )
 
     def test_customer_can_filter_unread_notifications(self):
         self.authenticate(self.customer)
-
-        Notification.objects.create(
-            user=self.customer,
-            notification_type=Notification.Type.PAYMENT_FAILED,
-            message="Your payment failed.",
-            is_read=True,
-        )
 
         response = self.client.get(
             "/api/notifications/?is_read=false"
@@ -154,19 +197,12 @@ class NotificationAPITests(APITestCase):
             1,
         )
 
-        self.assertEqual(
-            response.data["results"][0]["id"],
-            self.notification.id,
-        )
-
-    def test_customer_can_filter_read_notifications(self):
+    def test_customer_can_filter_by_notification_type(self):
         self.authenticate(self.customer)
 
-        self.notification.is_read = True
-        self.notification.save()
-
         response = self.client.get(
-            "/api/notifications/?is_read=true"
+            "/api/notifications/"
+            "?notification_type=PAYMENT_SUCCESSFUL"
         )
 
         self.assertEqual(
@@ -179,8 +215,20 @@ class NotificationAPITests(APITestCase):
             1,
         )
 
-        self.assertEqual(
-            response.data["results"][0]["id"],
-            self.notification.id,
+    def test_customer_can_search_notification_message(self):
+        self.authenticate(self.customer)
+
+        response = self.client.get(
+            "/api/notifications/"
+            "?search=payment"
         )
-   
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            len(response.data["results"]),
+            1,
+        )
