@@ -1,16 +1,17 @@
-from django.contrib.auth import get_user_model
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, generics
 from rest_framework.permissions import IsAuthenticated
 
-from notifications.models import Notification
+from notifications.services import (
+    notify_issue_assigned,
+    notify_issue_created,
+    notify_issue_status_changed,
+    notify_staff_of_new_issue,
+)
 
 from .models import Issue
 from .permissions import IsIssueParticipant
 from .serializers import IssueSerializer, StaffIssueUpdateSerializer
-
-
-User = get_user_model()
 
 
 class IssueListCreateView(generics.ListCreateAPIView):
@@ -65,30 +66,14 @@ class IssueListCreateView(generics.ListCreateAPIView):
             customer=self.request.user
         )
 
-        # Notify the customer
-        Notification.objects.create(
-            user=self.request.user,
-            notification_type=Notification.Type.ISSUE_CREATED,
-            message=(
-                f"Your issue '{issue.title}' has been created."
-            ),
+        notify_issue_created(
+            self.request.user,
+            issue,
         )
 
-        # Notify all staff members
-        staff_users = User.objects.filter(
-            role=User.Role.STAFF
+        notify_staff_of_new_issue(
+            issue,
         )
-
-        for staff in staff_users:
-            Notification.objects.create(
-                user=staff,
-                notification_type=Notification.Type.ISSUE_CREATED,
-                message=(
-                    f"New issue '{issue.title}' "
-                    f"has been created by "
-                    f"{issue.customer.username}."
-                ),
-            )
 
 
 class IssueDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -127,28 +112,17 @@ class IssueDetailView(generics.RetrieveUpdateDestroyAPIView):
 
         issue = serializer.save()
 
-        # Notify newly assigned staff member
         if (
             issue.assigned_to is not None
             and issue.assigned_to != old_assigned_to
         ):
-            Notification.objects.create(
-                user=issue.assigned_to,
-                notification_type=Notification.Type.ISSUE_ASSIGNED,
-                message=(
-                    f"You have been assigned issue "
-                    f"'{issue.title}'."
-                ),
+            notify_issue_assigned(
+                issue.assigned_to,
+                issue,
             )
 
-        # Notify customer when status changes
         if issue.status != old_status:
-            Notification.objects.create(
-                user=issue.customer,
-                notification_type=Notification.Type.ISSUE_STATUS_CHANGED,
-                message=(
-                    f"The status of your issue "
-                    f"'{issue.title}' has changed to "
-                    f"{issue.status}."
-                ),
+            notify_issue_status_changed(
+                issue.customer,
+                issue,
             )
