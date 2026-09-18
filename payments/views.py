@@ -267,6 +267,15 @@ class MpesaCallbackView(APIView):
                 "MpesaReceiptNumber"
             )
 
+            if not receipt_number:
+                return Response(
+                    {
+                        "ResultCode": 1,
+                        "ResultDesc": "M-Pesa receipt number is missing.",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
             payment.transaction_id = receipt_number
             payment.status = Payment.Status.SUCCESSFUL
 

@@ -1264,6 +1264,60 @@ class PaymentAPITests(APITestCase):
             "254712345678",
         )
 
+    def test_stk_push_rejects_zero_payment_amount(self):
+        self.payment.amount = Decimal("0.00")
+        self.payment.save()
+
+        self.client.force_authenticate(
+            user=self.customer
+        )
+
+        response = self.client.post(
+            reverse("mpesa-stk-push"),
+            {
+                "payment_id": self.payment.id,
+                "phone_number": "0712345678",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertEqual(
+            response.data["detail"],
+            "Payment amount must be greater than zero.",
+        )
+
+    def test_stk_push_rejects_negative_payment_amount(self):
+        self.payment.amount = Decimal("-100.00")
+        self.payment.save()
+
+        self.client.force_authenticate(
+            user=self.customer
+        )
+
+        response = self.client.post(
+            reverse("mpesa-stk-push"),
+            {
+                "payment_id": self.payment.id,
+                "phone_number": "0712345678",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertEqual(
+            response.data["detail"],
+            "Payment amount must be greater than zero.",
+        )
+
     def test_stk_push_rejects_invalid_phone_number(self):
         self.client.force_authenticate(
             user=self.customer
@@ -1312,6 +1366,55 @@ class PaymentAPITests(APITestCase):
             "You do not have permission to access this payment.",
         ) 
     
+    def test_mpesa_success_callback_requires_receipt_number(self):
+        self.payment.mpesa_checkout_request_id = "ws_CO_NO_RECEIPT123"
+        self.payment.save()
+
+        callback_payload = {
+            "Body": {
+                "stkCallback": {
+                    "MerchantRequestID": "29115-34620561-13",
+                    "CheckoutRequestID": "ws_CO_NO_RECEIPT123",
+                    "ResultCode": 0,
+                    "ResultDesc": "The service request is processed successfully.",
+                    "CallbackMetadata": {
+                        "Item": [
+                            {
+                                "Name": "Amount",
+                                "Value": 1000,
+                            },
+                            {
+                                "Name": "PhoneNumber",
+                                "Value": 254712345678,
+                            },
+                        ]
+                    },
+                }
+            }
+        }
+
+        response = self.client.post(
+            "/api/payments/mpesa/callback/",
+            callback_payload,
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.payment.refresh_from_db()
+
+        self.assertEqual(
+            self.payment.status,
+            Payment.Status.PENDING,
+        )
+
+        self.assertIsNone(
+            self.payment.transaction_id,
+        )
+
     def test_mpesa_duplicate_successful_callback_does_not_overwrite_receipt(
         self,
     ):

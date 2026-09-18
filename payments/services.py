@@ -132,6 +132,11 @@ def initiate_mpesa_stk_push(
     """
     phone_number = normalize_mpesa_phone_number(phone_number)
 
+    if payment.amount <= 0:
+        raise ValueError(
+            "Payment amount must be greater than zero."
+        )
+
     required_settings = {
         "MPESA_SHORTCODE": settings.MPESA_SHORTCODE,
         "MPESA_PASSKEY": settings.MPESA_PASSKEY,
