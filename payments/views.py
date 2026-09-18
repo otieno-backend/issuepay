@@ -104,19 +104,24 @@ class PaymentDetailView(generics.RetrieveUpdateDestroyAPIView):
     def perform_update(self, serializer):
         old_status = self.get_object().status
 
-        payment = serializer.save()
+        with transaction.atomic():
+            payment = serializer.save()
 
-        if (
-            payment.status != old_status
-            and payment.status == Payment.Status.SUCCESSFUL
-        ):
-            notify_payment_successful(payment)
+            if (
+                payment.status != old_status
+                and payment.status == Payment.Status.SUCCESSFUL
+            ):
+                transaction.on_commit(
+                    lambda: notify_payment_successful(payment)
+                )
 
-        if (
-            payment.status != old_status
-            and payment.status == Payment.Status.FAILED
-        ):
-            notify_payment_failed(payment)
+            if (
+                payment.status != old_status
+                and payment.status == Payment.Status.FAILED
+            ):
+                transaction.on_commit(
+                    lambda: notify_payment_failed(payment)
+                )
 
 class MpesaSTKPushView(APIView):
     permission_classes = [IsAuthenticated]

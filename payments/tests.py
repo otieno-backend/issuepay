@@ -692,13 +692,14 @@ class PaymentAPITests(APITestCase):
     def test_successful_payment_notifies_customer(self):
         self.authenticate(self.staff)
 
-        response = self.client.patch(
-            f"/api/payments/{self.payment.id}/",
-            {
-                "status": "SUCCESSFUL",
-            },
-            format="json",
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.patch(
+                f"/api/payments/{self.payment.id}/",
+                {
+                    "status": "SUCCESSFUL",
+                },
+                format="json",
+            )
 
         self.assertEqual(
             response.status_code,
@@ -722,13 +723,14 @@ class PaymentAPITests(APITestCase):
     def test_failed_payment_notifies_customer(self):
         self.authenticate(self.staff)
 
-        response = self.client.patch(
-            f"/api/payments/{self.payment.id}/",
-            {
-                "status": "FAILED",
-            },
-            format="json",
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.patch(
+                f"/api/payments/{self.payment.id}/",
+                {
+                    "status": "FAILED",
+                },
+                format="json",
+            )
 
         self.assertEqual(
             response.status_code,
