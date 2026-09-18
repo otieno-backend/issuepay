@@ -2,6 +2,7 @@ from decimal import Decimal
 from unittest.mock import patch, Mock
 
 from django.contrib.auth import get_user_model
+from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -1261,4 +1262,184 @@ class PaymentAPITests(APITestCase):
         self.assertEqual(
             payload["PhoneNumber"],
             "254712345678",
+        )
+
+    def test_stk_push_rejects_invalid_phone_number(self):
+        self.client.force_authenticate(
+            user=self.customer
+        )
+
+        response = self.client.post(
+            reverse("mpesa-stk-push"),
+            {
+               "payment_id": self.payment.id,
+                "phone_number": "071234",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertEqual(
+            response.data["detail"],
+            "Enter a valid Kenyan phone number.",
+        )
+
+    def test_customer_cannot_initiate_stk_push_for_another_customers_payment(self):
+        self.client.force_authenticate(
+            user=self.customer
+        )
+
+        response = self.client.post(
+            reverse("mpesa-stk-push"),
+            {
+                "payment_id": self.other_payment.id,
+                "phone_number": "0712345678",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+        self.assertEqual(
+            response.data["detail"],
+            "You do not have permission to access this payment.",
+        ) 
+    
+    def test_mpesa_duplicate_successful_callback_does_not_overwrite_receipt(
+        self,
+    ):
+        self.payment.mpesa_checkout_request_id = "ws_CO_DUPLICATE123"
+        self.payment.save()
+
+        first_callback = {
+            "Body": {
+                "stkCallback": {
+                    "MerchantRequestID": "29115-34620561-10",
+                    "CheckoutRequestID": "ws_CO_DUPLICATE123",
+                    "ResultCode": 0,
+                    "ResultDesc": "The service request is processed successfully.",
+                    "CallbackMetadata": {
+                        "Item": [
+                            {
+                                "Name": "MpesaReceiptNumber",
+                                "Value": "FIRST123",
+                            },
+                        ]
+                    },
+                }
+            }
+        }
+
+        first_response = self.client.post(
+            "/api/payments/mpesa/callback/",
+            first_callback,
+            format="json",
+        )
+
+        self.assertEqual(
+            first_response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.payment.refresh_from_db()
+
+        self.assertEqual(
+            self.payment.status,
+            Payment.Status.SUCCESSFUL,
+        )
+
+        self.assertEqual(
+            self.payment.transaction_id,
+            "FIRST123",
+        )
+
+        duplicate_callback = {
+            "Body": {
+                "stkCallback": {
+                    "MerchantRequestID": "29115-34620561-11",
+                    "CheckoutRequestID": "ws_CO_DUPLICATE123",
+                    "ResultCode": 0,
+                    "ResultDesc": "The service request is processed successfully.",
+                    "CallbackMetadata": {
+                        "Item": [
+                            {
+                                "Name": "MpesaReceiptNumber",
+                                "Value": "SECOND456",
+                            },
+                        ]
+                    },
+                }
+            }
+        }
+
+        duplicate_response = self.client.post(
+            "/api/payments/mpesa/callback/",
+            duplicate_callback,
+            format="json",
+        )
+
+        self.assertEqual(
+            duplicate_response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.payment.refresh_from_db()
+
+        self.assertEqual(
+            self.payment.status,
+            Payment.Status.SUCCESSFUL,
+        )
+
+        self.assertEqual(
+            self.payment.transaction_id,
+            "FIRST123",
+        )
+
+    def test_mpesa_failed_callback_does_not_change_successful_payment(
+        self,
+    ):
+        self.payment.mpesa_checkout_request_id = "ws_CO_SUCCESS_FAILED123"
+        self.payment.status = Payment.Status.SUCCESSFUL
+        self.payment.transaction_id = "ORIGINAL123"
+        self.payment.save()
+
+        callback_payload = {
+            "Body": {
+                "stkCallback": {
+                    "MerchantRequestID": "29115-34620561-12",
+                    "CheckoutRequestID": "ws_CO_SUCCESS_FAILED123",
+                    "ResultCode": 1032,
+                    "ResultDesc": "Request canceled by user.",
+                }
+            }
+        }
+
+        response = self.client.post(
+            "/api/payments/mpesa/callback/",
+            callback_payload,
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.payment.refresh_from_db()
+
+        self.assertEqual(
+            self.payment.status,
+            Payment.Status.SUCCESSFUL,
+        )
+
+        self.assertEqual(
+            self.payment.transaction_id,
+            "ORIGINAL123",
         )

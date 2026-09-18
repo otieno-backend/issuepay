@@ -144,6 +144,15 @@ class MpesaSTKPushView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        if (
+            request.user.role == "CUSTOMER"
+            and payment.customer != request.user
+        ):
+            return Response(
+                {"detail": "You do not have permission to access this payment."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        
         if payment.status != Payment.Status.PENDING:
             return Response(
                 {
@@ -159,6 +168,11 @@ class MpesaSTKPushView(APIView):
             mpesa_response = initiate_mpesa_stk_push(
                 payment,
                 phone_number,
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as exc:
             return Response(
@@ -221,6 +235,17 @@ class MpesaCallbackView(APIView):
                 },
                 status=status.HTTP_404_NOT_FOUND,
             )
+        
+        if payment.status == Payment.Status.SUCCESSFUL:
+            return Response(
+                {
+                    "ResultCode": 0,
+                    "ResultDesc": "Payment already processed.",
+                },
+                status=status.HTTP_200_OK,
+            )
+
+
 
         if result_code == 0:
             callback_metadata = stk_callback.get(

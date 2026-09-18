@@ -130,6 +130,7 @@ def initiate_mpesa_stk_push(
 
     This requires valid Daraja credentials.
     """
+    phone_number = normalize_mpesa_phone_number(phone_number)
 
     required_settings = {
         "MPESA_SHORTCODE": settings.MPESA_SHORTCODE,
@@ -149,7 +150,6 @@ def initiate_mpesa_stk_push(
             + ", ".join(missing)
         )
 
-    phone_number = normalize_mpesa_phone_number(phone_number)
 
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
 
