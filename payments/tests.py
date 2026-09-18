@@ -786,11 +786,12 @@ class PaymentAPITests(APITestCase):
             }
         }
 
-        response = self.client.post(
-            "/api/payments/mpesa/callback/",
-            callback_payload,
-            format="json",
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                "/api/payments/mpesa/callback/",
+                callback_payload,
+                format="json",
+            )
 
         self.assertEqual(
             response.status_code,
@@ -802,6 +803,20 @@ class PaymentAPITests(APITestCase):
         self.assertEqual(
             self.payment.status,
             Payment.Status.SUCCESSFUL,
+        )
+
+        notification = Notification.objects.filter(
+            user=self.customer,
+            notification_type=Notification.Type.PAYMENT_SUCCESSFUL,
+        ).latest("created_at")
+
+        self.assertIn(
+            "successful",
+            notification.message,
+        )
+
+        self.assertFalse(
+            notification.is_read,
         )
 
     def test_mpesa_successful_callback_saves_receipt_number(self):
@@ -872,11 +887,12 @@ class PaymentAPITests(APITestCase):
             }
         }
 
-        response = self.client.post(
-            "/api/payments/mpesa/callback/",
-            callback_payload,
-            format="json",
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                "/api/payments/mpesa/callback/",
+                callback_payload,
+                format="json",
+            )
 
         self.assertEqual(
             response.status_code,
@@ -888,6 +904,20 @@ class PaymentAPITests(APITestCase):
         self.assertEqual(
             self.payment.status,
             Payment.Status.FAILED,
+        )
+
+        notification = Notification.objects.filter(
+            user=self.customer,
+            notification_type=Notification.Type.PAYMENT_FAILED,
+        ).latest("created_at")
+
+        self.assertIn(
+            "failed",
+            notification.message,
+        )
+
+        self.assertFalse(
+            notification.is_read,
         )
 
     def test_mpesa_callback_rejects_unknown_checkout_request_id(self):

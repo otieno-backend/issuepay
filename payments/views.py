@@ -286,6 +286,10 @@ class MpesaCallbackView(APIView):
                         ]
                     )
 
+                    transaction.on_commit(
+                        lambda: notify_payment_successful(payment)
+                    )
+
                 else:
                     payment.status = Payment.Status.FAILED
 
@@ -294,6 +298,10 @@ class MpesaCallbackView(APIView):
                             "status",
                             "updated_at",
                         ]
+                    )
+
+                    transaction.on_commit(
+                        lambda: notify_payment_failed(payment)
                     )
 
         except Payment.DoesNotExist:
