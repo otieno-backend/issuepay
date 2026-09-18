@@ -7,6 +7,7 @@ from rest_framework import status
 from .services import initiate_mpesa_stk_push
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
+from django.db import transaction
 
 from .models import Payment
 from .permissions import IsPaymentParticipant,CanCreatePayment
@@ -224,9 +225,72 @@ class MpesaCallbackView(APIView):
             )
 
         try:
-            payment = Payment.objects.get(
-                mpesa_checkout_request_id=checkout_request_id
-            )
+            with transaction.atomic():
+                payment = Payment.objects.select_for_update().get(
+                    mpesa_checkout_request_id=checkout_request_id
+                )
+
+                if payment.status == Payment.Status.SUCCESSFUL:
+                    return Response(
+                        {
+                            "ResultCode": 0,
+                            "ResultDesc": "Payment already processed.",
+                        },
+                        status=status.HTTP_200_OK,
+                    )
+
+                if result_code == 0:
+                    callback_metadata = stk_callback.get(
+                        "CallbackMetadata", {}
+                    )
+
+                    items = callback_metadata.get("Item", [])
+
+                    metadata = {}
+
+                    for item in items:
+                        name = item.get("Name")
+                        value = item.get("Value")
+
+                        if name:
+                            metadata[name] = value
+
+                    receipt_number = metadata.get(
+                        "MpesaReceiptNumber"
+                    )
+
+                    if not receipt_number:
+                        return Response(
+                            {
+                                "ResultCode": 1,
+                                "ResultDesc": (
+                                    "M-Pesa receipt number is missing."
+                                ),
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+
+                    payment.transaction_id = receipt_number
+                    payment.status = Payment.Status.SUCCESSFUL
+
+                    payment.save(
+                        update_fields=[
+                            "transaction_id",
+                            "status",
+                            "updated_at",
+                        ]
+                    )
+
+                else:
+                    payment.status = Payment.Status.FAILED
+
+                    payment.save(
+                        update_fields=[
+                            "status",
+                            "updated_at",
+                        ]
+                    )
+
         except Payment.DoesNotExist:
             return Response(
                 {
@@ -234,67 +298,6 @@ class MpesaCallbackView(APIView):
                     "ResultDesc": "Payment not found.",
                 },
                 status=status.HTTP_404_NOT_FOUND,
-            )
-        
-        if payment.status == Payment.Status.SUCCESSFUL:
-            return Response(
-                {
-                    "ResultCode": 0,
-                    "ResultDesc": "Payment already processed.",
-                },
-                status=status.HTTP_200_OK,
-            )
-
-
-
-        if result_code == 0:
-            callback_metadata = stk_callback.get(
-                "CallbackMetadata", {}
-            )
-
-            items = callback_metadata.get("Item", [])
-
-            metadata = {}
-
-            for item in items:
-                name = item.get("Name")
-                value = item.get("Value")
-
-                if name:
-                    metadata[name] = value
-
-            receipt_number = metadata.get(
-                "MpesaReceiptNumber"
-            )
-
-            if not receipt_number:
-                return Response(
-                    {
-                        "ResultCode": 1,
-                        "ResultDesc": "M-Pesa receipt number is missing.",
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            payment.transaction_id = receipt_number
-            payment.status = Payment.Status.SUCCESSFUL
-
-            payment.save(
-                update_fields=[
-                    "transaction_id",
-                    "status",
-                    "updated_at",
-                ]
-            )
-
-        else:
-            payment.status = Payment.Status.FAILED
-
-            payment.save(
-                update_fields=[
-                    "status",
-                    "updated_at",
-                ]
             )
 
         return Response(
