@@ -58,16 +58,25 @@ class IssueSerializer(serializers.ModelSerializer):
             )
 
         return value
-    
+
 
 class StaffIssueUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Issue
         fields = [
+            "amount",
             "status",
             "priority",
             "assigned_to",
         ]
+
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError(
+                "Issue amount must be greater than zero."
+            )
+
+        return value
 
     def validate_assigned_to(self, user):
         if user is not None and user.role != User.Role.STAFF:
