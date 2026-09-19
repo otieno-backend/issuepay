@@ -19,6 +19,6 @@ class IsIssueParticipant(BasePermission):
             if request.method in SAFE_METHODS:
                 return True
 
-            return False
+            return request.method in ["PUT", "PATCH"]
 
         return False

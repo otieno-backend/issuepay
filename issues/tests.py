@@ -141,7 +141,7 @@ class IssueAPITests(APITestCase):
             status.HTTP_404_NOT_FOUND,
         )
 
-    def test_customer_cannot_update_issue(self):
+    def test_customer_can_update_own_issue(self):
         self.authenticate(self.customer)
 
         response = self.client.patch(
@@ -154,7 +154,7 @@ class IssueAPITests(APITestCase):
 
         self.assertEqual(
             response.status_code,
-            status.HTTP_403_FORBIDDEN,
+            status.HTTP_200_OK,
         )
 
     def test_customer_cannot_delete_issue(self):
