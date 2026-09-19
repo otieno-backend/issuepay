@@ -22,6 +22,7 @@ class IssueSerializer(serializers.ModelSerializer):
             "id",
             "title",
             "description",
+            "amount",
             "customer",
             "assigned_to",
             "status",
@@ -33,6 +34,7 @@ class IssueSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "id",
             "customer",
+            "amount",
             "created_at",
             "updated_at",
         ]
