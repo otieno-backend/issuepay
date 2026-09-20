@@ -225,10 +225,9 @@ class MpesaCallbackView(APIView):
         )
 
         logger.warning(
-            "M-Pesa callback received: ResultCode=%s, ResultDesc=%s, CheckoutRequestID=%s",
+            "M-Pesa callback received: ResultCode=%s, ResultDesc=%s",
             result_code,
             result_desc,
-            checkout_request_id,
         )
 
         if not checkout_request_id:
