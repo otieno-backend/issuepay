@@ -1,3 +1,5 @@
+import logging
+
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, generics
 from rest_framework.permissions import IsAuthenticated
@@ -13,6 +15,8 @@ from .models import Payment
 from .permissions import IsPaymentParticipant,CanCreatePayment
 from .serializers import PaymentSerializer,PaymentUpdateSerializer
 from notifications.services import notify_payment_failed, notify_payment_successful
+
+logger = logging.getLogger(__name__)
 
 
 class PaymentListCreateView(generics.ListCreateAPIView):
@@ -218,6 +222,13 @@ class MpesaCallbackView(APIView):
 
         checkout_request_id = stk_callback.get(
             "CheckoutRequestID"
+        )
+
+        logger.info(
+            "M-Pesa callback received: ResultCode=%s, ResultDesc=%s, CheckoutRequestID=%s",
+            result_code,
+            result_desc,
+            checkout_request_id,
         )
 
         if not checkout_request_id:
