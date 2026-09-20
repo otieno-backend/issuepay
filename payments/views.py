@@ -224,7 +224,7 @@ class MpesaCallbackView(APIView):
             "CheckoutRequestID"
         )
 
-        logger.info(
+        logger.warning(
             "M-Pesa callback received: ResultCode=%s, ResultDesc=%s, CheckoutRequestID=%s",
             result_code,
             result_desc,
